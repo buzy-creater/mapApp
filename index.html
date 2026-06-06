@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>教育施設マップ</title>
+
+  <!-- Leaflet CSS -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIINfQhf6HqG1V7vRhpL5tR7jE9UJ4xyC48="
+    crossorigin=""
+  />
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #1f2937;
+      background: #f3f4f6;
+    }
+
+    header {
+      padding: 16px 20px;
+      background: #ffffff;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    select,
+    input {
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      background: #ffffff;
+    }
+
+    #count {
+      font-size: 14px;
+      color: #4b5563;
+    }
+
+    #map {
+      width: 100%;
+      height: calc(100vh - 73px);
+    }
+
+    .popup-title {
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .popup-row {
+      margin: 2px 0;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 640px) {
+      header {
+        align-items: stretch;
+      }
+
+      .controls,
+      select,
+      input {
+        width: 100%;
+      }
+
+      #map {
+        height: calc(100vh - 170px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>教育施設マップ</h1>
+      <div id="count">読み込み中...</div>
+    </div>
+
+    <div class="controls">
+      <select id="typeFilter">
+        <option value="all">すべての施設種別</option>
+      </select>
+      <input id="keyword" type="search" placeholder="施設名・住所で検索" />
+    </div>
+  </header>
+
+  <main>
+    <div id="map"></div>
+  </main>
+
+  <!-- Leaflet JS -->
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <script>
+    const GEOJSON_FILE = "P29-23_13.geojson";
+
+    const schoolTypes = {
+      "16001": "小学校",
+      "16002": "中学校",
+      "16003": "中等教育学校",
+      "16004": "高等学校",
+      "16005": "高等専門学校",
+      "16006": "短期大学",
+      "16007": "大学",
+      "16011": "幼稚園",
+      "16012": "特別支援学校",
+      "16013": "幼保連携型認定こども園",
+      "16014": "義務教育学校",
+      "16015": "各種学校",
+      "16016": "専修学校"
+    };
+
+    const map = L.map("map").setView([35.6895, 139.6917], 11);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    const markersLayer = L.layerGroup().addTo(map);
+    const typeFilter = document.getElementById("typeFilter");
+    const keywordInput = document.getElementById("keyword");
+    const countText = document.getElementById("count");
+
+    let allFeatures = [];
+
+    function getFacilityType(feature) {
+      const code = feature.properties.P29_003;
+      return schoolTypes[code] || `不明（${code}）`;
+    }
+
+    function createPopupContent(feature) {
+      const p = feature.properties;
+      const facilityType = getFacilityType(feature);
+      const [lng, lat] = feature.geometry.coordinates;
+
+      return `
+        <div class="popup-title">${p.P29_004 || "名称不明"}</div>
+        <div class="popup-row"><strong>施設種別：</strong>${facilityType}</div>
+        <div class="popup-row"><strong>住所：</strong>${p.P29_005 || "住所不明"}</div>
+        <div class="popup-row"><strong>施設ID：</strong>${p.P29_002 || "-"}</div>
+        <div class="popup-row"><strong>自治体コード：</strong>${p.P29_001 || "-"}</div>
+        <div class="popup-row"><strong>緯度経度：</strong>${lat.toFixed(6)}, ${lng.toFixed(6)}</div>
+      `;
+    }
+
+    function renderMarkers() {
+      markersLayer.clearLayers();
+
+      const selectedType = typeFilter.value;
+      const keyword = keywordInput.value.trim().toLowerCase();
+      const bounds = [];
+
+      const filteredFeatures = allFeatures.filter((feature) => {
+        const p = feature.properties;
+        const facilityType = getFacilityType(feature);
+        const name = p.P29_004 || "";
+        const address = p.P29_005 || "";
+
+        const matchesType = selectedType === "all" || facilityType === selectedType;
+        const matchesKeyword =
+          keyword === "" ||
+          name.toLowerCase().includes(keyword) ||
+          address.toLowerCase().includes(keyword);
+
+        return matchesType && matchesKeyword;
+      });
+
+      filteredFeatures.forEach((feature) => {
+        if (!feature.geometry || feature.geometry.type !== "Point") return;
+
+        const [lng, lat] = feature.geometry.coordinates;
+        const marker = L.circleMarker([lat, lng], {
+          radius: 6,
+          weight: 1,
+          fillOpacity: 0.8
+        }).bindPopup(createPopupContent(feature));
+
+        marker.addTo(markersLayer);
+        bounds.push([lat, lng]);
+      });
+
+      countText.textContent = `${filteredFeatures.length.toLocaleString()}件 / 全${allFeatures.length.toLocaleString()}件`;
+
+      if (bounds.length > 0) {
+        map.fitBounds(bounds, { padding: [30, 30] });
+      }
+    }
+
+    function setupTypeFilter(features) {
+      const types = [...new Set(features.map(getFacilityType))].sort();
+
+      types.forEach((type) => {
+        const option = document.createElement("option");
+        option.value = type;
+        option.textContent = type;
+        typeFilter.appendChild(option);
+      });
+    }
+
+    async function init() {
+      try {
+        const response = await fetch(GEOJSON_FILE);
+
+        if (!response.ok) {
+          throw new Error(`${GEOJSON_FILE} を読み込めませんでした`);
+        }
+
+        const geojson = await response.json();
+        allFeatures = geojson.features || [];
+
+        setupTypeFilter(allFeatures);
+        renderMarkers();
+      } catch (error) {
+        console.error(error);
+        countText.textContent = "GeoJSONの読み込みに失敗しました。Live Serverなどのローカルサーバー経由で開いてください。";
+      }
+    }
+
+    typeFilter.addEventListener("change", renderMarkers);
+    keywordInput.addEventListener("input", renderMarkers);
+
+    init();
+  </script>
+</body>
+</html>
